@@ -2455,6 +2455,10 @@ void app_main(void) {
   }
   ESP_ERROR_CHECK(ret);
 
+  /* Ensure device has default NVS keys for DAC/GPIO on first boot */
+  void set_default_nvs(void);
+  set_default_nvs();
+
   esp_log_level_set("*", ESP_LOG_INFO);
 
   // if enabled these cause a timer srv stack overflow
