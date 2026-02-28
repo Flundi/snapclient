@@ -1,0 +1,18 @@
+Install-Anleitung (kurz)
+
+1) Kopiere `html/amp-toggle.js` in dein Repo unter `html/`.
+2) Ergänze in `html/index.html` an passender Stelle (z. B. neben Playback-Controls):
+
+   <div id="amp-control"></div>
+   <script src="amp-toggle.js"></script>
+
+3) Implementiere einen Backend-Handler POST /api/amp, der JSON empfängt: { on:0|1, persist:0|1 }
+   - Bei persist=1 -> schreibe NVS (z.B. nvs_set set_GPIO "21=amp,22=..." oder natives API)
+   - Setze GPIO21 auf 1/0 zur Laufzeit (z. B. via sysfs/gpioctl/esp-idf gpio API)
+
+Server-Beispiele findest du in `README.md` dieses Pakets.
+
+Optional: Wenn dein Webserver keine POST-JSON-Handler unterstützt, passe amp-toggle.js an und sende FormData oder Query-Parameter.
+
+Patch / PR
+- Wenn du willst, bereite ich den Git-Branch + Diff vor (feature/web-ui-amp-toggle) und formuliere die PR-Beschreibung. Gib mir dazu kurz Schreib-/Push-Rechte oder übertrage die Dateien ins Repo und sag mir, ich erstelle den Diff.
