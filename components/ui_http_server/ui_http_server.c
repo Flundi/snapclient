@@ -29,6 +29,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "board_pins_config.h"
 
 static const char *TAG = "HTTP";
 static const gpio_num_t AMP_GPIO = GPIO_NUM_21;
@@ -367,15 +368,22 @@ static esp_err_t amp_post_handler(httpd_req_t *req) {
   int on = parse_json_flag(buf, cur_len, "\"on\"");
   int persist = parse_json_flag(buf, cur_len, "\"persist\"");
 
+  int8_t pa_gpio = get_pa_enable_gpio();
+  gpio_num_t out_gpio = AMP_GPIO;
+  if (pa_gpio >= 0 && pa_gpio < GPIO_NUM_MAX) {
+    out_gpio = (gpio_num_t)pa_gpio;
+  }
+
   gpio_config_t io_conf = {
-      .pin_bit_mask = (1ULL << AMP_GPIO),
+      .pin_bit_mask = (1ULL << out_gpio),
       .mode = GPIO_MODE_OUTPUT,
       .pull_up_en = GPIO_PULLUP_DISABLE,
       .pull_down_en = GPIO_PULLDOWN_DISABLE,
       .intr_type = GPIO_INTR_DISABLE,
   };
   ESP_ERROR_CHECK(gpio_config(&io_conf));
-  gpio_set_level(AMP_GPIO, on ? 1 : 0);
+  gpio_set_level(out_gpio, on ? 1 : 0);
+  ESP_LOGI(TAG, "AMP via board PA GPIO (%d) -> %d", out_gpio, on ? 1 : 0);
 
   if (persist) {
     esp_err_t err = write_nvs_set_gpio(SET_GPIO_VALUE);
