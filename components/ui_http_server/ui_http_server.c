@@ -21,14 +21,18 @@
 #include "esp_err.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "nvs.h"
 #include "esp_spiffs.h"
 #include "esp_vfs.h"
 #include "esp_wifi.h"
+#include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
 static const char *TAG = "HTTP";
+static const gpio_num_t AMP_GPIO = GPIO_NUM_21;
+static const char *SET_GPIO_VALUE = "21=amp,22=green:0,39=jack:0";
 
 static QueueHandle_t xQueueHttp;
 
@@ -114,6 +118,70 @@ static int find_key_value(char *key, char *parameter, char *value) {
   }
   //	ESP_LOGI(TAG, "key=[%s] value=[%s]", key, value);
   return strlen(value);
+}
+
+/**
+ * Very small JSON flag parser for payloads like:
+ * {"on":1,"persist":0}
+ */
+static int parse_json_flag(const char *body, size_t len, const char *key) {
+  if (!body || !key || len == 0) return 0;
+
+  const char *end = body + len;
+  const char *p = body;
+
+  while (p < end) {
+    const char *found = strstr(p, key);
+    if (!found || found >= end) break;
+
+    const char *colon = strchr(found, ':');
+    if (!colon || colon >= end) {
+      p = found + 1;
+      continue;
+    }
+
+    const char *n = colon + 1;
+    while (n < end &&
+           (*n == ' ' || *n == '\t' || *n == '\r' || *n == '\n')) {
+      n++;
+    }
+
+    if (n < end) {
+      if (*n == '1') return 1;
+      if (*n == '0') return 0;
+    }
+
+    p = found + 1;
+  }
+
+  return 0;
+}
+
+/**
+ * Persist set_GPIO key in namespace "storage".
+ */
+static esp_err_t write_nvs_set_gpio(const char *value) {
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open("storage", NVS_READWRITE, &handle);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));
+    return err;
+  }
+
+  err = nvs_set_str(handle, "set_GPIO", value);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "nvs_set_str failed: %s", esp_err_to_name(err));
+    nvs_close(handle);
+    return err;
+  }
+
+  err = nvs_commit(handle);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "nvs_commit failed: %s", esp_err_to_name(err));
+  }
+
+  nvs_close(handle);
+  return err;
 }
 
 /**
@@ -266,6 +334,67 @@ static esp_err_t root_post_handler(httpd_req_t *req) {
 }
 
 /*
+ * HTTP POST /api/amp
+ * expects JSON body: {"on":0|1,"persist":0|1}
+ */
+static esp_err_t amp_post_handler(httpd_req_t *req) {
+  char buf[256] = {0};
+  int total_len = req->content_len;
+
+  if (total_len <= 0) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "missing body");
+    return ESP_FAIL;
+  }
+
+  if (total_len >= (int)sizeof(buf)) {
+    total_len = sizeof(buf) - 1;
+  }
+
+  int cur_len = 0;
+  while (cur_len < total_len) {
+    int received = httpd_req_recv(req, buf + cur_len, total_len - cur_len);
+    if (received <= 0) {
+      if (received == HTTPD_SOCK_ERR_TIMEOUT) continue;
+      httpd_resp_set_status(req, "500 Internal Server Error");
+      httpd_resp_sendstr(req, "recv failed");
+      return ESP_FAIL;
+    }
+    cur_len += received;
+  }
+  buf[cur_len] = '\0';
+
+  int on = parse_json_flag(buf, cur_len, "\"on\"");
+  int persist = parse_json_flag(buf, cur_len, "\"persist\"");
+
+  gpio_config_t io_conf = {
+      .pin_bit_mask = (1ULL << AMP_GPIO),
+      .mode = GPIO_MODE_OUTPUT,
+      .pull_up_en = GPIO_PULLUP_DISABLE,
+      .pull_down_en = GPIO_PULLDOWN_DISABLE,
+      .intr_type = GPIO_INTR_DISABLE,
+  };
+  ESP_ERROR_CHECK(gpio_config(&io_conf));
+  gpio_set_level(AMP_GPIO, on ? 1 : 0);
+
+  if (persist) {
+    esp_err_t err = write_nvs_set_gpio(SET_GPIO_VALUE);
+    if (err == ESP_OK) {
+      ESP_LOGI(TAG, "Persisted NVS key set_GPIO -> %s", SET_GPIO_VALUE);
+    }
+  }
+
+  char resp[128];
+  int r = snprintf(resp, sizeof(resp), "{\"ok\":1,\"on\":%d,\"persist\":%d}", on,
+                   persist);
+  if (r < 0) r = 0;
+
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+  return ESP_OK;
+}
+
+/*
  * favicon get handler
  */
 static esp_err_t favicon_get_handler(httpd_req_t *req) {
@@ -306,6 +435,13 @@ esp_err_t start_server(const char *base_path, int port) {
       //.user_ctx  = server_data	// Pass server data as context
   };
   httpd_register_uri_handler(server, &_root_post_handler);
+
+    httpd_uri_t _amp_post_handler = {
+      .uri = "/api/amp",
+      .method = HTTP_POST,
+      .handler = amp_post_handler,
+    };
+    httpd_register_uri_handler(server, &_amp_post_handler);
 
   /* URI handler for favicon.ico */
   httpd_uri_t _favicon_get_handler = {

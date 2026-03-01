@@ -91,6 +91,9 @@
 			</div>
 		</div>
 
+		<div id="amp-control" style="margin-top: 18px;"></div>
+		<p style="font-size: 1rem; margin-top: 6px;">AMP (GPIO21)</p>
+
 	<script>
 		function sendUpdateSlider() {
 			var gain_1 = document.getElementById('BaseGainSlider').value;
@@ -108,6 +111,61 @@
 			var output = document.getElementById(id);
 			output.innerHTML = val;
 		}
+	</script>
+
+	<script>
+		(function() {
+			function createUI() {
+				var container = document.getElementById('amp-control');
+				if (!container) return;
+
+				var btn = document.createElement('button');
+				btn.id = 'amp-toggle-btn';
+				btn.textContent = 'AMP: Aus';
+				btn.dataset.on = '0';
+
+				var persistLabel = document.createElement('label');
+				persistLabel.style.marginLeft = '8px';
+				persistLabel.style.fontSize = '1rem';
+
+				var chk = document.createElement('input');
+				chk.type = 'checkbox';
+				chk.id = 'amp-persist';
+
+				persistLabel.appendChild(chk);
+				persistLabel.appendChild(document.createTextNode(' Persistieren'));
+
+				container.appendChild(btn);
+				container.appendChild(persistLabel);
+
+				btn.addEventListener('click', async function() {
+					var on = (btn.dataset.on === '1') ? 0 : 1;
+					var persist = chk.checked ? 1 : 0;
+					try {
+						btn.disabled = true;
+						var resp = await fetch('/api/amp', {
+							method: 'POST',
+							headers: {'Content-Type': 'application/json'},
+							body: JSON.stringify({ on: on, persist: persist })
+						});
+						if (!resp.ok) throw new Error('HTTP ' + resp.status);
+						btn.dataset.on = String(on);
+						btn.textContent = 'AMP: ' + (on ? 'An' : 'Aus');
+					} catch (e) {
+						console.error('AMP toggle failed', e);
+						alert('AMP toggle failed: ' + e.message);
+					} finally {
+						btn.disabled = false;
+					}
+				});
+			}
+
+			if (document.readyState === 'loading') {
+				document.addEventListener('DOMContentLoaded', createUI);
+			} else {
+				createUI();
+			}
+		})();
 	</script>
 </body>
 </html>
